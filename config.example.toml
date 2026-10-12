@@ -1,0 +1,88 @@
+# Copy to config.toml and edit. Every value shown here is the built-in default,
+# so you only need to keep the lines you change.
+
+calibration = "calibration.json"
+
+[camera]
+# A /dev/video* path, a V4L2 index such as "0", "picamera", or an image/video file.
+# The /dev/v4l/by-id/ path keeps pointing at the OBSBOT whatever else is plugged in.
+source = "/dev/v4l/by-id/usb-Remo_Tech_Co.__Ltd._OBSBOT_Meet_2-video-index0"
+width = 3840          # use 1296x972 with "picamera" (the Camera v1's full-field binned mode)
+height = 2160
+lock_after = 2.0      # seconds for exposure and white balance to settle; "picamera" then freezes
+                      # them, USB cameras keep them automatic (0 = don't wait, never freeze)
+fps = 30.0
+focus = -1            # manual lens position, 0-100 on the OBSBOT; -1 = autofocus
+zoom = -1             # 0 (widest) - 100 on the OBSBOT; -1 = leave the camera's setting alone
+
+[vision]
+work_width = 640        # frame is shrunk to this width to locate the body
+strip_width = 320       # width of the straightened body crop
+fg_threshold = 14.0     # raise if paper texture/shadows are detected as objects
+shadow_weight = 0.5     # lower to ignore shadows and glare more (but grey parts too)
+min_body_frac = 0.0005  # smallest body, as a fraction of the frame area
+max_diameter_frac = 0.3   # thicker objects (hands etc.) are ignored
+min_aspect = 1.4        # allowed body length / diameter
+max_aspect = 8.0
+band_threshold = 9.0    # lower to split bands that look alike, raise if one band splits in two
+body_tolerance = 12.0   # raise if stretches of bare body are reported as bands
+min_band_frac = 0.025   # narrowest band, as a fraction of body length
+end_trim = 0.04         # ignored at each end of the body
+
+[sorter]
+stable_frames = 5   # identical consecutive readings needed to accept a value
+reject_after = 30   # frames without a stable reading before the resistor is rejected
+clear_frames = 5    # empty frames that mean the resistor has been taken away
+min_margin = 4.0    # how clear-cut a reading must be; raise for fewer wrong bins, more rejects
+max_color_distance = 15.0  # reject readings where a band matches no calibrated colour this well
+
+[servo]
+enabled = false
+pin = 18              # BCM numbering (physical pin 12)
+min_pulse_ms = 1.0    # widen towards 0.5 / 2.5 if your servo does not reach +-90 degrees
+max_pulse_ms = 2.0
+reject_angle = 90.0   # where unreadable resistors go
+settle = 0.5          # seconds to wait for the servo to arrive
+
+[web]
+enabled = true
+host = "0.0.0.0"   # "127.0.0.1" to keep the preview off the network
+port = 8000
+max_fps = 15.0     # preview frame rate cap, to spare the CPU
+
+# Bins are tried top to bottom; the first that accepts the value wins.
+# Use min/max (ohms, min inclusive, max exclusive) or a list of exact values.
+# A value no bin accepts goes to the reject position.
+[[bin]]
+name = "under 100 Ω"
+max = 100
+angle = -60
+
+[[bin]]
+name = "100 Ω – 1 kΩ"
+min = 100
+max = 1e3
+angle = -30
+
+[[bin]]
+name = "1 kΩ – 10 kΩ"
+min = 1e3
+max = 1e4
+angle = 0
+
+[[bin]]
+name = "10 kΩ – 100 kΩ"
+min = 1e4
+max = 1e5
+angle = 30
+
+[[bin]]
+name = "100 kΩ and up"
+min = 1e5
+angle = 60
+
+# Example of a bin for specific values:
+# [[bin]]
+# name = "pull-ups"
+# values = [4700, 10000]
+# angle = 45

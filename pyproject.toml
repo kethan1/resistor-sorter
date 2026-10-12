@@ -1,0 +1,23 @@
+[project]
+name = "resistor-sorter"
+version = "0.1.0"
+description = "Reads resistor colour bands with a Raspberry Pi camera and sorts the resistors into bins"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python-headless>=4.6",
+]
+
+[project.scripts]
+resistor-sorter = "resistor_sorter.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
