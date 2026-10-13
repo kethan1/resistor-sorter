@@ -30,19 +30,37 @@ min_band_frac = 0.025   # narrowest band, as a fraction of body length
 end_trim = 0.04         # ignored at each end of the body
 
 [sorter]
-stable_frames = 5   # identical consecutive readings needed to accept a value
-reject_after = 30   # frames without a stable reading before the resistor is rejected
-clear_frames = 5    # empty frames that mean the resistor has been taken away
-min_margin = 4.0    # how clear-cut a reading must be; raise for fewer wrong bins, more rejects
-max_color_distance = 15.0  # reject readings where a band matches no calibrated colour this well
+window = 2.0          # seconds a resistor is watched; the readings over that time decide its bin
+min_readings = 3      # trusted readings a decision needs (a Pi 4 gives 5-10 a second, a Pi 3 2-4)
+min_agreement = 0.75  # share of those readings that must agree on the bin; raise for fewer wrong bins
+reject_after = 6.0    # seconds without a decision before the resistor is rejected
+clear_after = 0.5     # seconds with nothing in view before the next resistor is expected
+min_margin = 4.0      # how clear-cut a single reading must be to count; raise for fewer wrong bins
+max_color_distance = 15.0  # ignore readings where a band matches no calibrated colour this well
 
 [servo]
-enabled = false
+enabled = "auto"      # "auto" drives the servo on a Raspberry Pi and leaves it alone elsewhere
+                      # (a laptop); true / false force it on or off
 pin = 18              # BCM numbering (physical pin 12)
 min_pulse_ms = 1.0    # widen towards 0.5 / 2.5 if your servo does not reach +-90 degrees
 max_pulse_ms = 2.0
 reject_angle = 90.0   # where unreadable resistors go
 settle = 0.5          # seconds to wait for the servo to arrive
+mode = "chute"        # "chute": turn to the bin's angle and stay there until the next resistor
+                      # "swing": turn there, wait `hold` seconds, turn back to `rest_angle`
+rest_angle = 0.0      # ("swing" only) where the servo waits between resistors
+hold = 1.0            # ("swing" only) seconds at the bin angle before turning back
+
+[matrix]
+enabled = "auto"      # an 8x8 LED matrix on a MAX7219 that shows each resistor's bin number; "auto"
+                      # drives it on a Raspberry Pi with python3-spidev installed, true / false force it
+bus = 0               # /dev/spidev<bus>.<device>: SPI0 with chip select CE0 (GPIO 8, physical pin 24)
+device = 0
+brightness = 4        # 0 (dimmest) to 15
+rotate = 0            # 0, 90, 180 or 270 degrees clockwise, for however the module is mounted;
+mirror = false        # also flip left to right (after rotating). `python3 -m resistor_sorter matrix`
+                      # shows the signs so these can be checked
+chain = 1             # MAX7219s daisy-chained on the module (4 on a "4-in-1"); only the first is used
 
 [web]
 enabled = true

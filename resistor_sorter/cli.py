@@ -17,7 +17,8 @@ import numpy as np
 from .camera import FrameGrabber, load_image, open_source
 from .colors import COLORS, Palette, load_calibration, save_calibration
 from .config import Config, load_config
-from .sorter import Chute, Sorter
+from .matrix import Max7219, Panel, device_path, matrix_unavailable, signs
+from .sorter import Chute, Event, Sorter, servo_unavailable
 from .vision import Detection, annotate, detect, read, scene_problem
 from .web import Preview
 
@@ -26,6 +27,20 @@ def _describe(detection: Detection | None) -> str:
     if detection is None:
         return "no resistor found"
     return ", ".join(f"{b.color} ({b.candidates[0][1]:.0f})" for b in detection.bands) or "no bands"
+
+
+def _outcome(event: Event, detection: Detection | None) -> str:
+    """One line per resistor: what was read, where it went, and how sure that was."""
+    if event.reading is None:
+        if event.tally:
+            seen = ", ".join(f"{reading} x{count}" for reading, count in event.tally)
+            return f"undecided ({seen})  -> reject"
+        return f"unreadable ({_describe(detection)})  -> reject"
+    text = f"{event.reading}  [{' '.join(event.reading.colors)}]"
+    sureness = f"{event.agreed} of {event.votes} readings"
+    if event.bin is None:
+        return f"{text}  -> reject (no bin for this value; {sureness})"
+    return f"{text}  -> {event.bin.name}  ({sureness})"
 
 
 def _grab(cfg: Config) -> np.ndarray:
@@ -53,7 +68,10 @@ def _feed_preview(grabber: FrameGrabber, preview: Preview, overlay, max_fps: flo
 def cmd_run(cfg: Config, args) -> int:
     palette = Palette(load_calibration(cfg.calibration))
     sorter = Sorter(cfg.sorter, cfg.bins)
-    chute = Chute(cfg.servo) if cfg.servo.enabled else None
+    servo_off = servo_unavailable(cfg.servo)
+    chute = None if servo_off else Chute(cfg.servo)
+    matrix_off = matrix_unavailable(cfg.matrix)
+    panel = None if matrix_off else Panel(Max7219(cfg.matrix))
     preview = Preview(cfg.web.host, cfg.web.port) if cfg.web.enabled else None
     grabber = FrameGrabber(open_source(cfg.camera))
     # Analysis of the latest processed frame, read by the preview thread.
@@ -62,6 +80,9 @@ def cmd_run(cfg: Config, args) -> int:
         threading.Thread(target=_feed_preview, daemon=True,
                          args=(grabber, preview, lambda: overlay, cfg.web.max_fps)).start()
         print(f"preview on http://{cfg.web.host}:{cfg.web.port}/", flush=True)
+    print(f"servo: off ({servo_off})" if servo_off else f"servo: on GPIO {cfg.servo.pin}, {cfg.servo.mode} mode",
+          flush=True)
+    print(f"matrix: off ({matrix_off})" if matrix_off else f"matrix: on {device_path(cfg.matrix)}", flush=True)
     print("ready - place a resistor under the camera (Ctrl-C to quit)", flush=True)
 
     seen, last_hint = 0, None
@@ -76,13 +97,10 @@ def cmd_run(cfg: Config, args) -> int:
                 print(f"setup problem: {hint}", flush=True)
             last_hint = hint
             event = sorter.step(detection is not None, reading)
+            if panel:
+                panel.update(sorter, event)
             if event is not None:
-                if event.bin is not None:
-                    print(f"{event.reading}  [{' '.join(event.reading.colors)}]  -> {event.bin.name}", flush=True)
-                elif event.reading is not None:
-                    print(f"{event.reading}  [{' '.join(event.reading.colors)}]  -> reject (no bin for this value)", flush=True)
-                else:
-                    print(f"unreadable ({_describe(detection)})  -> reject", flush=True)
+                print(_outcome(event, detection), flush=True)
                 if chute:
                     chute.point(event.bin.angle if event.bin else cfg.servo.reject_angle)
     except KeyboardInterrupt:
@@ -91,6 +109,8 @@ def cmd_run(cfg: Config, args) -> int:
         grabber.close()
         if chute:
             chute.close()
+        if panel:
+            panel.close()
         if preview:
             preview.close()
     return 0
@@ -179,6 +199,26 @@ def cmd_snap(cfg: Config, args) -> int:
     return 0
 
 
+def cmd_matrix(cfg: Config, args) -> int:
+    """Show the ready ring, each bin's number and the reject cross in turn, to check the matrix is the right way up."""
+    matrix_off = matrix_unavailable(cfg.matrix)
+    if matrix_off:
+        raise RuntimeError(f"the matrix is off ({matrix_off})")
+    matrix = Max7219(cfg.matrix)
+    print(f"matrix: on {device_path(cfg.matrix)}. If the signs are not the right way up, change "
+          "matrix.rotate (0, 90, 180 or 270) and matrix.mirror in config.toml", flush=True)
+    try:
+        for label, frame in signs(cfg.bins):
+            print(label, flush=True)
+            matrix.show(frame)
+            time.sleep(args.hold)
+    except KeyboardInterrupt:
+        print()
+    finally:
+        matrix.close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="resistor-sorter", description=__doc__)
     parser.add_argument("-c", "--config", help="TOML settings file (default: ./config.toml if present)")
@@ -205,6 +245,11 @@ def main(argv: list[str] | None = None) -> int:
     snap = sub.add_parser("snap", help="save one camera frame")
     snap.add_argument("output")
     snap.set_defaults(func=cmd_snap)
+
+    matrix = sub.add_parser("matrix", help="show the bin numbers on the LED matrix, to check which way up it is")
+    matrix.add_argument("--hold", type=float, default=1.0, metavar="SECONDS",
+                        help="how long to show each sign (default 1)")
+    matrix.set_defaults(func=cmd_matrix)
 
     args = parser.parse_args(argv)
     # systemd stops the service with SIGTERM; exit through the finally blocks

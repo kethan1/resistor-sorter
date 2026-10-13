@@ -4,64 +4,130 @@ import cv2
 import pytest
 from synth import render
 
-from resistor_sorter.cli import main
+from resistor_sorter.cli import _outcome, main
 from resistor_sorter.config import Bin, SorterConfig, load_config
 from resistor_sorter.decode import decode
-from resistor_sorter.sorter import Sorter, pick_bin
+from resistor_sorter.sorter import Event, Sorter, pick_bin
 
-READING = decode(["yellow", "violet", "red", "gold"])
-OTHER = decode(["yellow", "violet", "orange", "gold"])
+READING = decode(["yellow", "violet", "red", "gold"])  # 4.7 kΩ: bin "1 kΩ – 10 kΩ"
+SAME_BIN = decode(["brown", "black", "red", "gold"])  # 1 kΩ: the same bin
+OTHER = decode(["yellow", "violet", "orange", "gold"])  # 47 kΩ: bin "10 kΩ – 100 kΩ"
+ABSENT = "absent"  # nothing under the camera (None is a resistor that could not be read)
+
+FPS = 8  # frame times are then multiples of 1/8, exact in floating point
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
 
 
 def make_sorter(**overrides):
-    cfg = SorterConfig(stable_frames=3, reject_after=6, clear_frames=2, **overrides)
-    return Sorter(cfg, load_config(None).bins)
+    settings = {"window": 1.0, "min_readings": 3, "min_agreement": 0.75, "reject_after": 3.0, "clear_after": 0.25}
+    clock = Clock()
+    return Sorter(SorterConfig(**{**settings, **overrides}), load_config(None).bins, clock), clock
 
 
-def test_accepts_after_stable_frames_then_waits_for_removal():
-    sorter = make_sorter()
-    assert sorter.step(True, READING) is None
-    assert sorter.step(True, READING) is None
-    event = sorter.step(True, READING)
+def feed(sorter, clock, frames):
+    """One step per frame at FPS; each frame is a reading, None (unreadable) or ABSENT."""
+    events = []
+    for frame in frames:
+        clock.now = round(clock.now * FPS + 1) / FPS
+        events.append(sorter.step(frame is not ABSENT, None if frame is ABSENT else frame))
+    return events
+
+
+# With window = 1.0 the first chance to decide is the 9th frame (1 second after the first).
+
+
+def test_decides_from_a_window_of_readings_then_waits_for_removal():
+    sorter, clock = make_sorter()
+    events = feed(sorter, clock, [READING] * 9)
+    assert events[:8] == [None] * 8
+    event = events[8]
     assert event.reading.ohms == 4700 and event.bin.name == "1 kΩ – 10 kΩ"
+    assert (event.agreed, event.votes) == (9, 9) and event.tally == [(READING, 9)]
     # Same resistor still lying there: nothing more happens.
-    assert all(sorter.step(True, READING) is None for _ in range(10))
+    assert feed(sorter, clock, [READING] * 8) == [None] * 8
     # Removed, then a new one placed.
-    sorter.step(False, None)
-    sorter.step(False, None)
-    events = [sorter.step(True, OTHER) for _ in range(3)]
-    assert events[-1].reading.ohms == 47000
+    assert feed(sorter, clock, [ABSENT] * 3) == [None] * 3
+    event = feed(sorter, clock, [OTHER] * 9)[-1]
+    assert event.reading.ohms == 47000 and event.bin.name == "10 kΩ – 100 kΩ"
 
 
-def test_changing_reading_restarts_the_count():
-    sorter = make_sorter()
-    steps = [READING, READING, OTHER, READING, READING]
-    assert all(sorter.step(True, r) is None for r in steps)
-    assert sorter.step(True, READING) is not None
+def test_a_few_stray_readings_are_outvoted():
+    sorter, clock = make_sorter()
+    events = feed(sorter, clock, [READING] * 4 + [OTHER, None, OTHER] + [READING] * 2)
+    assert events[:8] == [None] * 8
+    event = events[8]
+    assert event.reading.ohms == 4700 and event.bin.name == "1 kΩ – 10 kΩ"
+    assert (event.agreed, event.votes) == (6, 8)  # exactly min_agreement
+    assert event.tally == [(READING, 6), (OTHER, 2)]
 
 
-def test_rejects_when_never_stable():
-    sorter = make_sorter()
-    events = [sorter.step(True, None) for _ in range(6)]
-    assert events[:5] == [None] * 5
-    assert events[5].reading is None and events[5].bin is None
+def test_values_in_the_same_bin_count_together():
+    sorter, clock = make_sorter()
+    event = feed(sorter, clock, [READING] * 5 + [SAME_BIN] * 4)[-1]
+    assert event.bin.name == "1 kΩ – 10 kΩ" and (event.agreed, event.votes) == (9, 9)
+    assert event.reading.ohms == 4700  # the value read most often
+    assert event.tally == [(READING, 5), (SAME_BIN, 4)]
+
+
+def test_disagreement_is_rejected_after_a_while():
+    sorter, clock = make_sorter()
+    events = feed(sorter, clock, [READING, OTHER] * 13)
+    assert events[:24] == [None] * 24
+    event = events[24]  # 3 seconds after the first frame
+    assert event.reading is None and event.bin is None
+    assert event.tally == [(READING, 5), (OTHER, 4)] and event.votes == 9  # the last second's worth
+    assert events[25] is None
+
+
+def test_a_bad_start_is_forgotten():
+    sorter, clock = make_sorter()
+    events = feed(sorter, clock, [OTHER] * 3 + [READING] * 7)
+    assert events[8] is None  # 6 of 9 agree: not enough
+    event = events[9]  # the oldest stray reading has dropped out of the window
+    assert event.reading.ohms == 4700 and (event.agreed, event.votes) == (7, 9)
+
+
+def test_needs_enough_readings():
+    sorter, clock = make_sorter()
+    events = feed(sorter, clock, [None] * 8 + [READING] * 3)
+    assert events[:10] == [None] * 10
+    assert events[10].reading.ohms == 4700 and events[10].votes == 3
+
+
+def test_rejects_when_never_readable():
+    sorter, clock = make_sorter()
+    events = feed(sorter, clock, [None] * 26)
+    assert events[:24] == [None] * 24
+    assert events[24] == Event(None, None) and events[25] is None
 
 
 def test_uncertain_readings_are_not_trusted():
     from dataclasses import replace
 
     for shaky in (replace(READING, margin=1.0), replace(READING, worst=30.0)):
-        sorter = make_sorter(min_margin=4.0, max_color_distance=15.0)
-        events = [sorter.step(True, shaky) for _ in range(6)]
-        assert events[5].reading is None
+        sorter, clock = make_sorter(min_margin=4.0, max_color_distance=15.0)
+        events = feed(sorter, clock, [shaky] * 25)
+        assert events[24] == Event(None, None)
 
 
 def test_a_flickering_detection_does_not_reset():
-    sorter = make_sorter()
-    sorter.step(True, READING)
-    sorter.step(False, None)  # one dropped frame, fewer than clear_frames
-    sorter.step(True, READING)
-    assert sorter.step(True, READING) is not None
+    sorter, clock = make_sorter()
+    events = feed(sorter, clock, [READING] * 4 + [ABSENT] + [READING] * 4)
+    assert events[8] is not None and events[8].votes == 8
+
+
+def test_only_a_proper_absence_ends_a_resistor():
+    sorter, clock = make_sorter()
+    assert feed(sorter, clock, [READING] * 9)[-1] is not None
+    assert feed(sorter, clock, [ABSENT] * 2 + [READING] * 9) == [None] * 11  # too short a gap
+    assert feed(sorter, clock, [ABSENT] * 3 + [READING] * 9)[-1] is not None
 
 
 def test_pick_bin():
@@ -72,15 +138,33 @@ def test_pick_bin():
     assert pick_bin([Bin("low", max=1e3)], 4700) is None
 
 
+def test_outcome_lines():
+    bins = load_config(None).bins
+    accepted = Event(READING, bins[2], [(READING, 8), (OTHER, 2)], 8, 10)
+    assert _outcome(accepted, None) == "4.7 kΩ ±5%  [yellow violet red gold]  -> 1 kΩ – 10 kΩ  (8 of 10 readings)"
+    homeless = Event(READING, None, [(READING, 3)], 3, 3)
+    assert _outcome(homeless, None).endswith("-> reject (no bin for this value; 3 of 3 readings)")
+    undecided = Event(None, None, [(READING, 5), (OTHER, 4)], 0, 9)
+    assert _outcome(undecided, None) == "undecided (4.7 kΩ ±5% x5, 47 kΩ ±5% x4)  -> reject"
+    assert _outcome(Event(None, None), None) == "unreadable (no resistor found)  -> reject"
+
+
 def test_config_file(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text('[sorter]\nstable_frames = 9\n[[bin]]\nname = "all"\nangle = 10\n')
+    path.write_text('[sorter]\nwindow = 9\nreject_after = 10\n[[bin]]\nname = "all"\nangle = 10\n')
     cfg = load_config(path)
-    assert cfg.sorter.stable_frames == 9
+    assert cfg.sorter.window == 9
     assert [b.name for b in cfg.bins] == ["all"] and cfg.bins[0].accepts(1e6)
-    path.write_text("[sorter]\nstabel_frames = 9\n")
-    with pytest.raises(ValueError, match="stabel_frames"):
-        load_config(path)
+    for text, complaint in [
+        ("[sorter]\nwindoe = 9\n", "windoe"),
+        ("[sorter]\nmin_agreement = 75\n", "min_agreement"),
+        ("[sorter]\nwindow = 9\n", "reject_after"),
+        ('[servo]\nenabled = "sometimes"\n', "enabled"),
+        ('[servo]\nmode = "flap"\n', "mode"),
+    ]:
+        path.write_text(text)
+        with pytest.raises(ValueError, match=complaint):
+            load_config(path)
 
 
 def test_example_config_matches_defaults(tmp_path, monkeypatch):

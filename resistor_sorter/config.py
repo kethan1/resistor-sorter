@@ -9,6 +9,8 @@ from pathlib import Path
 
 
 OBSBOT_MEET_2 = "/dev/v4l/by-id/usb-Remo_Tech_Co.__Ltd._OBSBOT_Meet_2-video-index0"
+SERVO_MODES = ("chute", "swing")
+MATRIX_ROTATIONS = (0, 90, 180, 270)
 
 
 @dataclass
@@ -40,21 +42,39 @@ class VisionConfig:
 
 @dataclass
 class SorterConfig:
-    stable_frames: int = 5  # identical consecutive readings needed to accept
-    reject_after: int = 30  # frames without a stable reading before giving up
-    clear_frames: int = 5  # empty frames that mean the resistor has left
+    window: float = 2.0  # seconds a resistor is watched; the readings over that time decide its bin
+    min_readings: int = 3  # trusted readings a decision needs
+    min_agreement: float = 0.75  # share of the window's trusted readings that must agree on the bin
+    reject_after: float = 6.0  # seconds without a decision before the resistor is rejected
+    clear_after: float = 0.5  # seconds with nothing in view before the next resistor is expected
     min_margin: float = 4.0  # readings less clear-cut than this are not trusted
     max_color_distance: float = 15.0  # nor readings with a band this far from every reference
 
 
 @dataclass
 class ServoConfig:
-    enabled: bool = False
+    enabled: bool | str = "auto"  # true, false, or "auto": only on a Raspberry Pi with gpiozero installed
     pin: int = 18  # BCM numbering
     min_pulse_ms: float = 1.0
     max_pulse_ms: float = 2.0
     reject_angle: float = 90.0  # where unreadable resistors go
     settle: float = 0.5  # seconds to wait for the servo to arrive
+    mode: str = "chute"  # "chute": stay aimed at the bin; "swing": go there, wait `hold`, return to `rest_angle`
+    rest_angle: float = 0.0  # ("swing" only) where the servo waits between resistors
+    hold: float = 1.0  # ("swing" only) seconds at the bin angle before swinging back
+
+
+@dataclass
+class MatrixConfig:
+    """A MAX7219-driven 8x8 LED matrix that shows which bin each resistor went to."""
+
+    enabled: bool | str = "auto"  # true, false, or "auto": only on a Raspberry Pi with spidev installed
+    bus: int = 0  # /dev/spidev<bus>.<device>; SPI0 with chip select CE0 (GPIO 8) by default
+    device: int = 0
+    brightness: int = 4  # 0 (dimmest) to 15
+    rotate: int = 0  # 0, 90, 180 or 270 degrees clockwise, for however the module is mounted
+    mirror: bool = False  # also flip left to right (after rotating), for modules wired the other way round
+    chain: int = 1  # MAX7219s daisy-chained on the module (4 on a "4-in-1"); only the first is used
 
 
 @dataclass
@@ -95,6 +115,7 @@ class Config:
     vision: VisionConfig = field(default_factory=VisionConfig)
     sorter: SorterConfig = field(default_factory=SorterConfig)
     servo: ServoConfig = field(default_factory=ServoConfig)
+    matrix: MatrixConfig = field(default_factory=MatrixConfig)
     web: WebConfig = field(default_factory=WebConfig)
     bins: list[Bin] = field(default_factory=_default_bins)
     calibration: str = "calibration.json"
@@ -106,6 +127,26 @@ def _apply(section, data: dict, where: str) -> None:
         if key not in known:
             raise ValueError(f"unknown option {where}.{key}")
         setattr(section, key, value)
+
+
+def _check(config: Config) -> None:
+    """Catch the settings that would otherwise fail late, or quietly do something else."""
+    servo, matrix, sorter = config.servo, config.matrix, config.sorter
+    for name, section in (("servo", servo), ("matrix", matrix)):
+        if not isinstance(section.enabled, bool) and section.enabled != "auto":
+            raise ValueError(f'{name}.enabled must be true, false or "auto"')
+    if servo.mode not in SERVO_MODES:
+        raise ValueError(f"servo.mode must be one of {', '.join(SERVO_MODES)}")
+    if not 0 <= matrix.brightness <= 15:
+        raise ValueError("matrix.brightness goes from 0 (dimmest) to 15")
+    if matrix.rotate not in MATRIX_ROTATIONS:
+        raise ValueError(f"matrix.rotate must be one of {', '.join(map(str, MATRIX_ROTATIONS))}")
+    if matrix.chain < 1:
+        raise ValueError("matrix.chain is the number of MAX7219s on the module, at least 1")
+    if not 0 < sorter.min_agreement <= 1:
+        raise ValueError("sorter.min_agreement is a share between 0 and 1, e.g. 0.75")
+    if sorter.reject_after < sorter.window:
+        raise ValueError("sorter.reject_after must not be shorter than sorter.window")
 
 
 def load_config(path: str | Path | None) -> Config:
@@ -123,8 +164,9 @@ def load_config(path: str | Path | None) -> Config:
             config.bins = [Bin(**entry) for entry in value]
         elif key == "calibration":
             config.calibration = value
-        elif key in ("camera", "vision", "sorter", "servo", "web"):
+        elif key in ("camera", "vision", "sorter", "servo", "matrix", "web"):
             _apply(getattr(config, key), value, key)
         else:
             raise ValueError(f"unknown section [{key}]")
+    _check(config)
     return config

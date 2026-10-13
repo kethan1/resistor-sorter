@@ -1,16 +1,20 @@
 # Resistor sorter
 
 Reads the colour bands of through-hole resistors with a Raspberry Pi 4 (a Pi 3
-also works, more slowly) and an OBSBOT Meet 2 USB camera, works out the value, and (optionally) swings a
-servo-driven chute to drop each resistor into the right bin.
+also works, more slowly) and an OBSBOT Meet 2 USB camera, works out the value, and (when running
+on the Pi) turns a servo to send each resistor to the right bin and shows the bin's number on an
+8x8 LED matrix.
 
 ```
 $ python3 -m resistor_sorter run
 preview on http://0.0.0.0:8000/
+servo: on GPIO 18, chute mode
+matrix: on /dev/spidev0.0
 ready - place a resistor under the camera (Ctrl-C to quit)
-4.7 kΩ ±5%  [yellow violet red gold]  -> 1 kΩ – 10 kΩ
-1 kΩ ±1%  [brown black black brown brown]  -> 1 kΩ – 10 kΩ
+4.7 kΩ ±5%  [yellow violet red gold]  -> 1 kΩ – 10 kΩ  (14 of 15 readings)
+1 kΩ ±1%  [brown black black brown brown]  -> 1 kΩ – 10 kΩ  (12 of 12 readings)
 unreadable (brown (3), grey (19), yellow (20), brown (2))  -> reject
+undecided (1 kΩ ±1% x7, 110 Ω ±1% x6)  -> reject
 ```
 
 It handles 3-, 4-, 5- and 6-band codes, beige and blue bodies, any rotation, and
@@ -27,7 +31,8 @@ analysis speed.
 | OBSBOT Meet 2 USB camera | Focus and zoom are set from the config, see below. Any UVC webcam or a Pi Camera Module also works |
 | Plain white matte paper or card | The background the resistor lies on |
 | Diffuse light | LED strip or desk lamp bounced off a white surface |
-| Optional: hobby servo (SG90 etc.) | Aims a chute at the bins |
+| Optional: hobby servo (SG90 etc.) | Aims a chute at the bins, or swings each resistor off to one side or the other. Only driven on a Pi |
+| Optional: MAX7219 8x8 LED matrix module | Shows a ring while waiting, a rising fill while a resistor is read, then its bin number (a cross for a reject). SPI; only driven on a Pi |
 
 ### Focus and zoom: the one thing that will stop it working
 
@@ -68,7 +73,7 @@ change them on an open camera.
 
 ```sh
 sudo apt update
-sudo apt install -y python3-opencv python3-numpy python3-gpiozero v4l-utils
+sudo apt install -y python3-opencv python3-numpy python3-gpiozero python3-spidev v4l-utils
 v4l2-ctl --list-devices      # should list "OBSBOT Meet 2"
 ```
 
@@ -76,6 +81,11 @@ Plug the OBSBOT into one of the blue USB 3 ports. If it is not listed, try
 another cable or port. `v4l2-ctl -d /dev/v4l/by-id/usb-Remo_Tech_Co.__Ltd._OBSBOT_Meet_2-video-index0 --list-ctrls`
 shows its controls and their current values. (`python3-picamera2` is only
 needed for the Pi camera module, `source = "picamera"`.)
+
+For the LED matrix, turn on the SPI port with `sudo raspi-config nonint do_spi 0`
+(or `raspi-config` → Interface Options → SPI) and reboot; `ls /dev/spidev*`
+should then list `/dev/spidev0.0`. The user created at setup may use it; any
+other needs `sudo adduser <user> spi`.
 
 Copy this folder to the Pi and run everything from inside it with
 `python3 -m resistor_sorter ...`. No virtualenv or pip install is needed: the
@@ -127,10 +137,17 @@ The number after each colour is its distance from the nearest reference
 (smaller is better; under ~10 is a good match). A band far from everything
 means that colour needs calibrating.
 
-**4. Sort.** `run` watches continuously. A resistor is accepted once the same
-value is read on 5 frames in a row, sent to the first bin that takes it, and
-then ignored until it is removed. If no trustworthy reading comes within 30
-frames it goes to the reject position.
+**4. Sort.** `run` watches continuously. No single frame is trusted: a
+resistor is watched for 2 seconds and the trustworthy readings from that time
+are averaged out by voting. When at least three quarters of them (and at least
+3) agree on a bin, the servo turns to that bin's angle, and the resistor is
+then ignored until it is taken away. Readings older than 2 seconds are dropped
+as it goes, so a bad start while the resistor is being put down does not count
+against it. If the readings never agree, it goes to the reject position after
+6 seconds and the printed line says which values were read how often. The
+servo is only driven on a Raspberry Pi; on a laptop `run` prints
+`servo: off (not running on a Raspberry Pi)` and just reports. An LED matrix,
+if fitted, shows the bin's number (see `[matrix]` below).
 
 ## Configuration
 
@@ -139,13 +156,38 @@ with its default. The main ones:
 
 - **`[[bin]]`**: sort by range (`min`/`max` in ohms) or exact `values`; first
   match wins. Each bin has a servo `angle`.
-- **`[servo]`**: set `enabled = true` to drive a chute servo from GPIO 18
-  (physical pin 12). Power the servo from its own 5 V supply with grounds
+- **`[servo]`**: `enabled = "auto"` (the default) drives a servo on GPIO 18
+  (physical pin 12) when running on a Raspberry Pi with `python3-gpiozero`
+  installed, and leaves it alone anywhere else; `true` and `false` force it.
+  `mode = "chute"` turns to the bin's angle and stays there until the next
+  resistor. `mode = "swing"` turns there, waits `hold` seconds and turns back
+  to `rest_angle`, for a paddle that tips or pushes each resistor off to one
+  side or the other. Power the servo from its own 5 V supply with grounds
   joined; a servo on the Pi's 5 V pin can brown it out. The servo is detached
   after each move so it does not buzz.
-- **`[sorter]`**: `min_margin` and `max_color_distance` decide when a reading
-  counts as trustworthy. Raising `min_margin` or lowering `max_color_distance`
-  gives fewer wrong bins and more rejects.
+- **`[matrix]`**: an 8x8 LED matrix on a MAX7219 shows a ring while the sorter
+  waits, fills up from the bottom while a resistor is watched, and then shows
+  its bin number (the bin's position in this file, 1 for the first `[[bin]]`;
+  two small digits from 10 up), or a cross for a reject, until the resistor is
+  taken away. `enabled` works as for the servo: `"auto"` drives it on a Pi with
+  `python3-spidev` installed. Wire VCC to 5 V (pin 2), GND to ground (pin 6),
+  DIN to GPIO 10/MOSI (pin 19), CS to GPIO 8/CE0 (pin 24) and CLK to
+  GPIO 11/SCLK (pin 23). The module wants 5 V; the Pi's 3.3 V signals are a
+  little under what the chip's datasheet asks for but work in practice, and
+  nothing is sent back to the Pi, so no level shifter is needed. `brightness`
+  goes from 0 to 15. The module can be mounted any way round: run
+  `python3 -m resistor_sorter matrix`, which shows the ready ring, each bin's
+  number and the reject cross in turn, and set `rotate` (0, 90, 180 or 270
+  degrees clockwise) and `mirror` until they read correctly. On a "4-in-1"
+  module set `chain = 4`; only the block nearest the input connector is used.
+- **`[sorter]`**: `window` is how many seconds of readings each decision is
+  based on, `min_readings` how many of them it needs, and `min_agreement` the
+  share that must point at the same bin. `reject_after` and `clear_after` are
+  the seconds before giving up on a resistor and before the next one is
+  expected. `min_margin` and `max_color_distance` decide when a single reading
+  counts as trustworthy. Raising `min_agreement`, `min_readings` or
+  `min_margin`, or lowering `max_color_distance`, gives fewer wrong bins and
+  more rejects.
 - **`[web]`**: the preview has no password. Set `host = "127.0.0.1"` or
   `enabled = false` on a shared network.
 - **`[camera]`**: `source` is the OBSBOT's `/dev/v4l/by-id/` path by
@@ -159,6 +201,24 @@ with its default. The main ones:
   automatic (and its old zoom) when the program exits.
   The default 3840x2160 (4K, 30 fps) MJPEG is costly to decode on a Pi; if
   readings come too slowly, use 1920x1080 or 1280x720 and zoom in further.
+
+For the simplest rig, a servo that swings low values one way and high values
+the other, use two bins and `swing` mode:
+
+```toml
+[servo]
+mode = "swing"     # turn, wait a second, turn back to the middle
+
+[[bin]]
+name = "under 1 kΩ"
+max = 1000
+angle = -60
+
+[[bin]]
+name = "1 kΩ and up"
+min = 1000
+angle = 60
+```
 
 To start the sorter at boot, create `/etc/systemd/system/resistor-sorter.service`:
 
@@ -233,8 +293,9 @@ then `sudo systemctl enable --now resistor-sorter`, and follow the log with
 - Motion blur and soft focus merge narrow gaps, so two adjacent bands of the
   same colour (red red ...) can be read as one. Hold the camera still and fix
   the focus.
-- The Pi camera code (`camera.PiCamera`) and servo code (`sorter.Chute`)
-  follow the picamera2 and gpiozero documentation but were written without the
+- The Pi camera code (`camera.PiCamera`), servo code (`sorter.Chute`) and LED
+  matrix code (`matrix.Max7219`) follow the picamera2 and gpiozero
+  documentation and the MAX7219 datasheet but were written without the
   hardware at hand. The USB camera code (4K capture, focus, zoom and the
   exposure/white balance lock) was checked on an OBSBOT Meet 2. The vision and sorting logic is covered by tests.
 
@@ -244,7 +305,7 @@ On a laptop, with [uv](https://docs.astral.sh/uv/):
 
 ```sh
 uv run pytest                                  # tests (synthetic images)
-uv run resistor-sorter --source photo.jpg run  # the full loop on a still image
+uv run resistor-sorter --source photo.jpg run  # the full loop on a still image (no servo off the Pi)
 ```
 
 To check against the library versions Raspberry Pi OS Bookworm ships:
@@ -260,7 +321,8 @@ uv run --isolated --python 3.11 --with numpy==1.24.2 \
 | `resistor_sorter/decode.py` | colour codes to ohms, choosing the likeliest reading |
 | `resistor_sorter/colors.py` | code tables, colour references, calibration file |
 | `resistor_sorter/sorter.py` | when to accept/reject, bin choice, servo |
+| `resistor_sorter/matrix.py` | MAX7219 LED matrix: the signs it shows, and the SPI driver |
 | `resistor_sorter/camera.py` | USB camera (focus, zoom, exposure lock), Pi camera and file sources |
 | `resistor_sorter/web.py` | MJPEG live preview |
-| `resistor_sorter/cli.py` | `run`, `read`, `calibrate`, `snap` |
+| `resistor_sorter/cli.py` | `run`, `read`, `calibrate`, `snap`, `matrix` |
 | `tests/synth.py` | draws synthetic resistor photos for the tests, optionally with blur, uneven light, shadows and JPEG |
