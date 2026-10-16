@@ -12,7 +12,7 @@ from synth import render
 
 from resistor_sorter import sorter as sorter_module
 from resistor_sorter.cli import main
-from resistor_sorter.config import Bin, MatrixConfig, SorterConfig, load_config
+from resistor_sorter.config import Bin, Config, MatrixConfig, SorterConfig, load_config
 from resistor_sorter.decode import decode
 from resistor_sorter.matrix import (
     CROSS,
@@ -205,7 +205,7 @@ OTHER = decode(["yellow", "violet", "orange", "gold"])  # 47 kΩ: the fourth
 
 
 def test_panel_follows_the_sorter():
-    step, matrix, panel = make_panel(load_config(None).bins)
+    step, matrix, panel = make_panel(Config().bins)
     assert same(matrix.frames, [READY])
     step(False)
     assert len(matrix.frames) == 1  # unchanged pictures are not sent again
@@ -225,7 +225,7 @@ def test_panel_follows_the_sorter():
 
 
 def test_panel_shows_a_cross_for_rejects():
-    step, matrix, _ = make_panel(load_config(None).bins)
+    step, matrix, _ = make_panel(Config().bins)
     for _ in range(8):  # never agree
         step(True, READING)
         step(True, OTHER)

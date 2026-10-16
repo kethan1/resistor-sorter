@@ -2,13 +2,14 @@
 
 Reads the colour bands of through-hole resistors with a Raspberry Pi 4 (a Pi 3
 also works, more slowly) and an OBSBOT Meet 2 USB camera, works out the value, and (when running
-on the Pi) turns a servo to send each resistor to the right bin and shows the bin's number on an
-8x8 LED matrix.
+on the Pi) lights the resistor with NeoPixel strips, turns a servo to send it to the right bin
+and shows the bin's number on an 8x8 LED matrix.
 
 ```
-$ python3 -m resistor_sorter run
+$ sudo python3 -m resistor_sorter run
 preview on http://0.0.0.0:8000/
-servo: on GPIO 18, chute mode
+light: on GPIO 12, 21 (8 LEDs each)
+servo: on GPIO 17, chute mode
 matrix: on /dev/spidev0.0
 ready - place a resistor under the camera (Ctrl-C to quit)
 4.7 kΩ ±5%  [yellow violet red gold]  -> 1 kΩ – 10 kΩ  (14 of 15 readings)
@@ -30,7 +31,8 @@ analysis speed.
 | Raspberry Pi 4 (or 3) | Raspberry Pi OS Bookworm or newer, 64-bit recommended, Lite is fine |
 | OBSBOT Meet 2 USB camera | Focus and zoom are set from the config, see below. Any UVC webcam or a Pi Camera Module also works |
 | Plain white matte paper or card | The background the resistor lies on |
-| Diffuse light | LED strip or desk lamp bounced off a white surface |
+| Diffuse light | The NeoPixel strips below, or an LED strip or desk lamp bounced off a white surface |
+| Optional: two WS2812 (NeoPixel) strips of 8 LEDs | Lit white by the sorter whenever the camera is in use, so calibration and sorting see the same light. Only driven on a Pi |
 | Optional: hobby servo (SG90 etc.) | Aims a chute at the bins, or swings each resistor off to one side or the other. Only driven on a Pi |
 | Optional: MAX7219 8x8 LED matrix module | Shows a ring while waiting, a rising fill while a resistor is read, then its bin number (a cross for a reject). SPI; only driven on a Pi |
 
@@ -66,7 +68,10 @@ change them on an open camera.
 - The paper must fill the whole frame edge to edge: the frame border is used
   to white-balance and to tell what is "background".
 - Soft, even light. Hard shadows and bright glare stripes are the main causes
-  of misreads. A ring of LEDs or a lamp aimed at the ceiling works well.
+  of misreads. A ring of LEDs or a lamp aimed at the ceiling works well. The
+  NeoPixel strips are rows of bright points: bounce them off white card, or put
+  a sheet of paper between them and the resistor, rather than aiming them
+  straight at it.
 - One resistor at a time, fully inside the frame (leads may run off the edge).
 
 ## Install on the Pi
@@ -87,10 +92,26 @@ For the LED matrix, turn on the SPI port with `sudo raspi-config nonint do_spi 0
 should then list `/dev/spidev0.0`. The user created at setup may use it; any
 other needs `sudo adduser <user> spi`.
 
+For the NeoPixel light, install Adafruit's library:
+
+```sh
+sudo pip3 install --break-system-packages rpi_ws281x adafruit-circuitpython-neopixel
+```
+
+It drives the strips from the Pi's PWM and PCM hardware, which only root may
+use, so with the light enabled put `sudo` in front of every command below (set
+`enabled = false` under `[light]` to do without it). Wire each strip's 5 V and
+GND to a 5 V pin (2 or 4) and a ground, and DIN to GPIO 12 (pin 32) and GPIO 21
+(pin 40). Sixteen LEDs at full white draw up to about 1 A, which the Pi's 5 V
+pins can supply from a 3 A power supply; more strips want a supply of their own
+with grounds joined. If the strip on GPIO 12 flickers, the onboard audio is
+sharing its PWM: set `dtparam=audio=off` in `/boot/firmware/config.txt`.
+
 Copy this folder to the Pi and run everything from inside it with
-`python3 -m resistor_sorter ...`. No virtualenv or pip install is needed: the
-apt packages provide everything. (Installing `opencv-python` from pip on the Pi
-is slow and can clash with the apt numpy.)
+`python3 -m resistor_sorter ...` (`sudo python3 -m resistor_sorter ...` with the
+light). No virtualenv is needed: the apt packages provide everything but the
+NeoPixel library. (Installing `opencv-python` from pip on the Pi is slow and can
+clash with the apt numpy.)
 
 ## Use
 
@@ -145,9 +166,10 @@ then ignored until it is taken away. Readings older than 2 seconds are dropped
 as it goes, so a bad start while the resistor is being put down does not count
 against it. If the readings never agree, it goes to the reject position after
 6 seconds and the printed line says which values were read how often. The
-servo is only driven on a Raspberry Pi; on a laptop `run` prints
-`servo: off (not running on a Raspberry Pi)` and just reports. An LED matrix,
-if fitted, shows the bin's number (see `[matrix]` below).
+light, servo and matrix are only driven on a Raspberry Pi; on a laptop `run`
+prints `servo: off (not running on a Raspberry Pi)`, and the like for the other
+two, and just reports. An LED matrix, if fitted, shows the bin's number (see
+`[matrix]` below).
 
 ## Configuration
 
@@ -156,9 +178,13 @@ with its default. The main ones:
 
 - **`[[bin]]`**: sort by range (`min`/`max` in ohms) or exact `values`; first
   match wins. Each bin has a servo `angle`.
-- **`[servo]`**: `enabled = "auto"` (the default) drives a servo on GPIO 18
-  (physical pin 12) when running on a Raspberry Pi with `python3-gpiozero`
+- **`[servo]`**: `enabled = "auto"` (the default) drives a servo on GPIO 17
+  (physical pin 11) when running on a Raspberry Pi with `python3-gpiozero`
   installed, and leaves it alone anywhere else; `true` and `false` force it.
+  `pin` moves it, but keep it off GPIO 12 and 18, the hardware PWM pins the
+  light's driver takes over. The default pulse widths of 0.5 and 2.4 ms are an
+  SG90's full travel; narrow them towards 1 and 2 ms for a servo that strains
+  at ±90°.
   `mode = "chute"` turns to the bin's angle and stays there until the next
   resistor. `mode = "swing"` turns there, waits `hold` seconds and turns back
   to `rest_angle`, for a paddle that tips or pushes each resistor off to one
@@ -180,6 +206,15 @@ with its default. The main ones:
   number and the reject cross in turn, and set `rotate` (0, 90, 180 or 270
   degrees clockwise) and `mirror` until they read correctly. On a "4-in-1"
   module set `chain = 4`; only the block nearest the input connector is used.
+- **`[light]`**: WS2812 (NeoPixel) strips that light the resistor. They come on
+  white whenever the camera is in use (`run`, `read`, `snap` and `calibrate`)
+  and go off at exit, so calibration and sorting see the same light. `enabled`
+  works as for the servo. `pins` lists the GPIO of each strip's data line (the
+  Pi can drive strips from GPIO 12 or 18, 21 and 10), `leds` is how many LEDs
+  each strip has, `brightness` goes from 0 to 1 and `color` is the red, green
+  and blue to show. The colour is resent once a second, so a strip that lost
+  it to a dip in its supply recovers. Installing the library and wiring are
+  under "Install on the Pi".
 - **`[sorter]`**: `window` is how many seconds of readings each decision is
   based on, `min_readings` how many of them it needs, and `min_agreement` the
   share that must point at the same bin. `reject_after` and `clear_after` are
@@ -228,7 +263,6 @@ Description=Resistor sorter
 After=network.target
 
 [Service]
-User=pi
 WorkingDirectory=/home/pi/resistor-sorter
 ExecStart=/usr/bin/python3 -m resistor_sorter run
 Restart=on-failure
@@ -238,7 +272,8 @@ WantedBy=multi-user.target
 ```
 
 then `sudo systemctl enable --now resistor-sorter`, and follow the log with
-`journalctl -fu resistor-sorter`.
+`journalctl -fu resistor-sorter`. The service runs as root, which the NeoPixel
+light needs; with the light disabled, add `User=pi` under `[Service]`.
 
 ## How it works
 
@@ -296,8 +331,12 @@ then `sudo systemctl enable --now resistor-sorter`, and follow the log with
 - The Pi camera code (`camera.PiCamera`), servo code (`sorter.Chute`) and LED
   matrix code (`matrix.Max7219`) follow the picamera2 and gpiozero
   documentation and the MAX7219 datasheet but were written without the
-  hardware at hand. The USB camera code (4K capture, focus, zoom and the
-  exposure/white balance lock) was checked on an OBSBOT Meet 2. The vision and sorting logic is covered by tests.
+  hardware at hand. The light code (`light.Light`) makes the same calls as a
+  short script run on the rig's two strips, and a servo on GPIO 17 with the
+  default pulse widths has been moved from a gpiozero script, but neither has
+  been driven from the sorter itself yet. The USB camera code (4K capture,
+  focus, zoom and the exposure/white balance lock) was checked on an OBSBOT
+  Meet 2. The vision and sorting logic is covered by tests.
 
 ## Development
 
@@ -322,6 +361,7 @@ uv run --isolated --python 3.11 --with numpy==1.24.2 \
 | `resistor_sorter/colors.py` | code tables, colour references, calibration file |
 | `resistor_sorter/sorter.py` | when to accept/reject, bin choice, servo |
 | `resistor_sorter/matrix.py` | MAX7219 LED matrix: the signs it shows, and the SPI driver |
+| `resistor_sorter/light.py` | NeoPixel strips that light the resistor while the camera is in use |
 | `resistor_sorter/camera.py` | USB camera (focus, zoom, exposure lock), Pi camera and file sources |
 | `resistor_sorter/web.py` | MJPEG live preview |
 | `resistor_sorter/cli.py` | `run`, `read`, `calibrate`, `snap`, `matrix` |

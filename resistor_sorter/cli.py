@@ -17,6 +17,7 @@ import numpy as np
 from .camera import FrameGrabber, load_image, open_source
 from .colors import COLORS, Palette, load_calibration, save_calibration
 from .config import Config, load_config
+from .light import Light, light_unavailable, location
 from .matrix import Max7219, Panel, device_path, matrix_unavailable, signs
 from .sorter import Chute, Event, Sorter, servo_unavailable
 from .vision import Detection, annotate, detect, read, scene_problem
@@ -44,11 +45,17 @@ def _outcome(event: Event, detection: Detection | None) -> str:
 
 
 def _grab(cfg: Config) -> np.ndarray:
-    camera = open_source(cfg.camera)
+    """One camera frame, taken under the light (if there is one) so it matches what `run` sees."""
+    light = None if light_unavailable(cfg.light) else Light(cfg.light)
     try:
-        frame = camera.read()
+        camera = open_source(cfg.camera)
+        try:
+            frame = camera.read()
+        finally:
+            camera.close()
     finally:
-        camera.close()
+        if light:
+            light.close()
     if frame is None:
         raise RuntimeError("camera returned no frame")
     return frame
@@ -68,6 +75,8 @@ def _feed_preview(grabber: FrameGrabber, preview: Preview, overlay, max_fps: flo
 def cmd_run(cfg: Config, args) -> int:
     palette = Palette(load_calibration(cfg.calibration))
     sorter = Sorter(cfg.sorter, cfg.bins)
+    light_off = light_unavailable(cfg.light)
+    light = None if light_off else Light(cfg.light)  # before the camera, so its exposure settles under the light
     servo_off = servo_unavailable(cfg.servo)
     chute = None if servo_off else Chute(cfg.servo)
     matrix_off = matrix_unavailable(cfg.matrix)
@@ -80,6 +89,7 @@ def cmd_run(cfg: Config, args) -> int:
         threading.Thread(target=_feed_preview, daemon=True,
                          args=(grabber, preview, lambda: overlay, cfg.web.max_fps)).start()
         print(f"preview on http://{cfg.web.host}:{cfg.web.port}/", flush=True)
+    print(f"light: off ({light_off})" if light_off else f"light: on {location(cfg.light)}", flush=True)
     print(f"servo: off ({servo_off})" if servo_off else f"servo: on GPIO {cfg.servo.pin}, {cfg.servo.mode} mode",
           flush=True)
     print(f"matrix: off ({matrix_off})" if matrix_off else f"matrix: on {device_path(cfg.matrix)}", flush=True)
@@ -89,6 +99,8 @@ def cmd_run(cfg: Config, args) -> int:
     try:
         while (item := grabber.next(seen)) is not None:
             seen, frame = item
+            if light:
+                light.refresh()
             detection = detect(frame, palette, cfg.vision)
             reading = read(detection)
             hint = scene_problem(frame, cfg.vision) if detection is None else None
@@ -111,6 +123,8 @@ def cmd_run(cfg: Config, args) -> int:
             chute.close()
         if panel:
             panel.close()
+        if light:
+            light.close()
         if preview:
             preview.close()
     return 0

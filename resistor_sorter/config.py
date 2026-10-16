@@ -54,9 +54,9 @@ class SorterConfig:
 @dataclass
 class ServoConfig:
     enabled: bool | str = "auto"  # true, false, or "auto": only on a Raspberry Pi with gpiozero installed
-    pin: int = 18  # BCM numbering
-    min_pulse_ms: float = 1.0
-    max_pulse_ms: float = 2.0
+    pin: int = 17  # BCM numbering; not 12 or 18, the hardware PWM pins the light's driver takes over
+    min_pulse_ms: float = 0.5  # an SG90's full travel; 1.0 / 2.0 for a servo that strains at +-90
+    max_pulse_ms: float = 2.4
     reject_angle: float = 90.0  # where unreadable resistors go
     settle: float = 0.5  # seconds to wait for the servo to arrive
     mode: str = "chute"  # "chute": stay aimed at the bin; "swing": go there, wait `hold`, return to `rest_angle`
@@ -75,6 +75,17 @@ class MatrixConfig:
     rotate: int = 0  # 0, 90, 180 or 270 degrees clockwise, for however the module is mounted
     mirror: bool = False  # also flip left to right (after rotating), for modules wired the other way round
     chain: int = 1  # MAX7219s daisy-chained on the module (4 on a "4-in-1"); only the first is used
+
+
+@dataclass
+class LightConfig:
+    """WS2812 (NeoPixel) strips that light the resistor whenever the camera is in use."""
+
+    enabled: bool | str = "auto"  # true, false, or "auto": only on a Raspberry Pi with the neopixel library installed
+    pins: list[int] = field(default_factory=lambda: [12, 21])  # BCM, one strip per pin: 12/18 (PWM), 21 (PCM) or 10 (SPI)
+    leds: int = 8  # LEDs on each strip
+    brightness: float = 1.0  # 0 to 1
+    color: list[int] = field(default_factory=lambda: [255, 255, 255])  # red, green, blue, 0-255 each
 
 
 @dataclass
@@ -116,6 +127,7 @@ class Config:
     sorter: SorterConfig = field(default_factory=SorterConfig)
     servo: ServoConfig = field(default_factory=ServoConfig)
     matrix: MatrixConfig = field(default_factory=MatrixConfig)
+    light: LightConfig = field(default_factory=LightConfig)
     web: WebConfig = field(default_factory=WebConfig)
     bins: list[Bin] = field(default_factory=_default_bins)
     calibration: str = "calibration.json"
@@ -131,8 +143,8 @@ def _apply(section, data: dict, where: str) -> None:
 
 def _check(config: Config) -> None:
     """Catch the settings that would otherwise fail late, or quietly do something else."""
-    servo, matrix, sorter = config.servo, config.matrix, config.sorter
-    for name, section in (("servo", servo), ("matrix", matrix)):
+    servo, matrix, light, sorter = config.servo, config.matrix, config.light, config.sorter
+    for name, section in (("servo", servo), ("matrix", matrix), ("light", light)):
         if not isinstance(section.enabled, bool) and section.enabled != "auto":
             raise ValueError(f'{name}.enabled must be true, false or "auto"')
     if servo.mode not in SERVO_MODES:
@@ -143,6 +155,17 @@ def _check(config: Config) -> None:
         raise ValueError(f"matrix.rotate must be one of {', '.join(map(str, MATRIX_ROTATIONS))}")
     if matrix.chain < 1:
         raise ValueError("matrix.chain is the number of MAX7219s on the module, at least 1")
+    if (not isinstance(light.pins, list) or not light.pins
+            or any(not isinstance(pin, int) or not 0 <= pin <= 27 for pin in light.pins)):
+        raise ValueError("light.pins lists the BCM GPIO (0-27) of each strip's data line, e.g. [12, 21]; "
+                         "light.enabled = false does without a light")
+    if light.leds < 1:
+        raise ValueError("light.leds is the number of LEDs on each strip, at least 1")
+    if not 0 <= light.brightness <= 1:
+        raise ValueError("light.brightness goes from 0 to 1")
+    if (not isinstance(light.color, list) or len(light.color) != 3
+            or any(not isinstance(c, int) or not 0 <= c <= 255 for c in light.color)):
+        raise ValueError("light.color is [red, green, blue], 0 to 255 each")
     if not 0 < sorter.min_agreement <= 1:
         raise ValueError("sorter.min_agreement is a share between 0 and 1, e.g. 0.75")
     if sorter.reject_after < sorter.window:
@@ -164,7 +187,7 @@ def load_config(path: str | Path | None) -> Config:
             config.bins = [Bin(**entry) for entry in value]
         elif key == "calibration":
             config.calibration = value
-        elif key in ("camera", "vision", "sorter", "servo", "matrix", "web"):
+        elif key in ("camera", "vision", "sorter", "servo", "matrix", "light", "web"):
             _apply(getattr(config, key), value, key)
         else:
             raise ValueError(f"unknown section [{key}]")

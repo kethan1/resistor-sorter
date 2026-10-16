@@ -81,7 +81,7 @@ def test_gpiozero_problems_are_explained(gpiozero):
         raise gpiozero.GPIOZeroError("Unable to load any default pin factory!")
 
     gpiozero.AngularServo = refuse
-    with pytest.raises(RuntimeError, match="GPIO 18.*pin factory"):
+    with pytest.raises(RuntimeError, match="GPIO 17.*pin factory"):
         Chute(ServoConfig())
 
 
@@ -131,7 +131,7 @@ def test_run_turns_the_servo_towards_the_bin(tmp_path, monkeypatch, capsys, gpio
     )
     assert main(["--source", "r.png", "run"]) == 0
     out = capsys.readouterr().out
-    assert "servo: on GPIO 18, chute mode" in out
+    assert "servo: on GPIO 17, chute mode" in out
     assert "4.7 kΩ ±5%  [yellow violet red gold]  -> 1 kΩ – 10 kΩ  (" in out
     assert StoppingServo.instances[-1].log == [0.0, "close"]
 
@@ -152,4 +152,5 @@ def test_run_without_a_pi_reports_but_leaves_the_servo_alone(tmp_path, monkeypat
     out = capsys.readouterr().out
     assert "servo: off (not running on a Raspberry Pi)" in out
     assert "matrix: off (not running on a Raspberry Pi)" in out
+    assert "light: off (not running on a Raspberry Pi)" in out
     assert "-> 1 kΩ – 10 kΩ  (" in out

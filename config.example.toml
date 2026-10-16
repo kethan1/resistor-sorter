@@ -41,9 +41,10 @@ max_color_distance = 15.0  # ignore readings where a band matches no calibrated 
 [servo]
 enabled = "auto"      # "auto" drives the servo on a Raspberry Pi and leaves it alone elsewhere
                       # (a laptop); true / false force it on or off
-pin = 18              # BCM numbering (physical pin 12)
-min_pulse_ms = 1.0    # widen towards 0.5 / 2.5 if your servo does not reach +-90 degrees
-max_pulse_ms = 2.0
+pin = 17              # BCM numbering (physical pin 11); keep off GPIO 12 and 18, the hardware
+                      # PWM pins the light's driver takes over
+min_pulse_ms = 0.5    # an SG90's full travel; narrow towards 1.0 / 2.0 if the servo strains at +-90
+max_pulse_ms = 2.4
 reject_angle = 90.0   # where unreadable resistors go
 settle = 0.5          # seconds to wait for the servo to arrive
 mode = "chute"        # "chute": turn to the bin's angle and stay there until the next resistor
@@ -61,6 +62,16 @@ rotate = 0            # 0, 90, 180 or 270 degrees clockwise, for however the mod
 mirror = false        # also flip left to right (after rotating). `python3 -m resistor_sorter matrix`
                       # shows the signs so these can be checked
 chain = 1             # MAX7219s daisy-chained on the module (4 on a "4-in-1"); only the first is used
+
+[light]
+enabled = "auto"      # WS2812 (NeoPixel) strips that light the resistor whenever the camera is in use;
+                      # "auto" drives them on a Raspberry Pi with the neopixel library installed (see
+                      # the README: it needs sudo), true / false force it
+pins = [12, 21]       # BCM GPIO of each strip's data line (physical pins 32 and 40). The Pi can drive
+                      # strips from GPIO 12 or 18 (PWM), 21 (PCM) and 10 (SPI)
+leds = 8              # LEDs on each strip
+brightness = 1.0      # 0 to 1
+color = [255, 255, 255]  # red, green, blue, 0 to 255 each
 
 [web]
 enabled = true

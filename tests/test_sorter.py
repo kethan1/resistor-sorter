@@ -5,7 +5,7 @@ import pytest
 from synth import render
 
 from resistor_sorter.cli import _outcome, main
-from resistor_sorter.config import Bin, SorterConfig, load_config
+from resistor_sorter.config import Bin, Config, SorterConfig, load_config
 from resistor_sorter.decode import decode
 from resistor_sorter.sorter import Event, Sorter, pick_bin
 
@@ -28,7 +28,7 @@ class Clock:
 def make_sorter(**overrides):
     settings = {"window": 1.0, "min_readings": 3, "min_agreement": 0.75, "reject_after": 3.0, "clear_after": 0.25}
     clock = Clock()
-    return Sorter(SorterConfig(**{**settings, **overrides}), load_config(None).bins, clock), clock
+    return Sorter(SorterConfig(**{**settings, **overrides}), Config().bins, clock), clock
 
 
 def feed(sorter, clock, frames):
@@ -139,7 +139,7 @@ def test_pick_bin():
 
 
 def test_outcome_lines():
-    bins = load_config(None).bins
+    bins = Config().bins
     accepted = Event(READING, bins[2], [(READING, 8), (OTHER, 2)], 8, 10)
     assert _outcome(accepted, None) == "4.7 kΩ ±5%  [yellow violet red gold]  -> 1 kΩ – 10 kΩ  (8 of 10 readings)"
     homeless = Event(READING, None, [(READING, 3)], 3, 3)
