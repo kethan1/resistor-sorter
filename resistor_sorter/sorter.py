@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import contextlib
 import importlib
-import multiprocessing
-import os
-import signal
 import time
 from collections import Counter, deque
 from collections.abc import Callable, Iterable
@@ -186,84 +182,34 @@ def servo_unavailable(cfg: ServoConfig) -> str | None:
 
 
 class Chute:
-    """A hobby servo that aims a chute at the chosen bin, or swings towards it and back.
-
-    gpiozero drives the servo with software PWM: a thread times every pulse. Once OpenCV keeps every
-    core busy those pulses come late and the servo jitters instead of turning, so the servo lives in a
-    child process at real-time priority and this class only tells it where to go."""
+    """A hobby servo that aims a chute at the chosen bin, or swings towards it and back."""
 
     def __init__(self, cfg: ServoConfig):
         try:
-            import gpiozero  # noqa: F401  (the child process imports it again)
+            from gpiozero import GPIOZeroError, Servo
         except ImportError as error:
             raise ImportError("the servo needs gpiozero: sudo apt install python3-gpiozero") from error
 
         self.cfg = cfg
-        # fork, not spawn: spawn would rerun `python -m resistor_sorter` in the child.
-        processes = multiprocessing.get_context("fork")
-        self._commands, child_end = processes.Pipe()
-        self._process = processes.Process(
-            target=_drive_servo, args=(cfg, child_end), name="servo", daemon=True)
-        self._process.start()
-        child_end.close()
         try:
-            error = self._commands.recv()
-        except EOFError:
-            error = "the servo process exited"
-        if error is not None:
-            self._process.join()
+            self._servo = Servo(cfg.pin, min_pulse_width=cfg.min_pulse_ms / 1000,
+                                max_pulse_width=cfg.max_pulse_ms / 1000)
+        except GPIOZeroError as error:
             raise RuntimeError(f"cannot drive a servo on GPIO {cfg.pin}: {error} "
-                               '(servo.enabled = "auto" skips the servo away from a Pi)')
+                               '(servo.enabled = "auto" skips the servo away from a Pi)') from error
         if cfg.mode == "swing":
             self._move(cfg.rest_angle)
 
     def point(self, angle: float) -> None:
         """Turn to `angle`; in "swing" mode, hold there and then turn back to the rest angle."""
+        self._move(angle)
         if self.cfg.mode == "swing":
-            # Keep driving the servo through the hold, so the paddle is not pushed back while it waits.
-            self._move(angle, detach=False)
             time.sleep(self.cfg.hold)
             self._move(self.cfg.rest_angle)
-        else:
-            self._move(angle)
 
-    def _move(self, angle: float, detach: bool = True) -> None:
-        self._commands.send(max(-1, min(1, angle)))
+    def _move(self, value: float) -> None:
+        self._servo.value = max(-1, min(1, value))
         time.sleep(self.cfg.settle)
-        if detach:
-            # Stop sending pulses so software PWM jitter does not make the servo buzz.
-            self._commands.send(None)
 
     def close(self) -> None:
-        with contextlib.suppress(OSError):  # the child is already gone
-            self._commands.send("close")
-        self._process.join(timeout=2)
-        self._commands.close()
-
-
-def _drive_servo(cfg: ServoConfig, commands) -> None:
-    """The servo's process: sends back None once the servo is set up (or why it cannot be), then
-    sets each value it is sent, detaches on None and stops at "close" or when the sorter goes away."""
-    signal.signal(signal.SIGINT, signal.SIG_IGN)  # Ctrl-C reaches the sorter, which then says "close"
-    # Real-time priority, inherited by gpiozero's PWM thread, keeps the pulses on time however busy the
-    # other cores are. It needs root, which the light already asks for; without it the pulses can jitter.
-    with contextlib.suppress(PermissionError):
-        os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(50))
-    from gpiozero import GPIOZeroError, Servo
-
-    try:
-        servo = Servo(cfg.pin, min_pulse_width=cfg.min_pulse_ms / 1000, max_pulse_width=cfg.max_pulse_ms / 1000)
-    except GPIOZeroError as error:
-        commands.send(str(error))
-        return
-    commands.send(None)
-    try:
-        while (value := commands.recv()) != "close":
-            if value is None:
-                servo.detach()
-            else:
-                servo.value = value
-    except EOFError:
-        pass
-    finally:
-        servo.close()
+        self._servo.close()

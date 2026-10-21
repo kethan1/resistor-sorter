@@ -20,7 +20,7 @@ from resistor_sorter.sorter import Chute, is_raspberry_pi, servo_unavailable
 
 
 class FakeServo:
-    """Stands in for gpiozero.Servo. It is made in the servo's own process, so it logs to a file."""
+    """Stands in for gpiozero.Servo and logs what the servo was told to a file."""
 
     log_path: ClassVar[Path]
 
@@ -68,7 +68,7 @@ def test_chute_mode_turns_to_the_bin_and_stays(gpiozero):
     chute.point(1.5)  # clamped to what the servo can do
     chute.close()
     assert logged() == [("init", 12, {"min_pulse_width": 0.0005, "max_pulse_width": 0.0025}),
-                        -0.6, "detach", 1, "detach", "close"]
+                        -0.6, 1, "close"]
 
 
 def test_swing_mode_turns_holds_and_turns_back(gpiozero, monkeypatch):
@@ -77,8 +77,7 @@ def test_swing_mode_turns_holds_and_turns_back(gpiozero, monkeypatch):
     chute = Chute(ServoConfig(mode="swing", rest_angle=0.1, hold=1.5, settle=0.2))
     chute.point(0.75)
     chute.close()
-    # Starts at rest, and is still driven while it holds the bin angle.
-    assert logged()[1:] == [0.1, "detach", 0.75, 0.1, "detach", "close"]
+    assert logged()[1:] == [0.1, 0.75, 0.1, "close"]  # starts at rest
     assert sleeps == [0.2, 0.2, 1.5, 0.2]
 
 
@@ -135,7 +134,7 @@ def test_run_turns_the_servo_towards_the_bin(tmp_path, monkeypatch, capsys, gpio
     out = capsys.readouterr().out
     assert "servo: on GPIO 17, chute mode" in out
     assert "4.7 kΩ ±5%  [yellow violet red gold]  -> 1 kΩ and up  (" in out
-    assert logged()[1:] == [0.75, "detach", "close"]
+    assert logged()[1:] == [0.75, "close"]
 
 
 def test_run_without_a_pi_reports_but_leaves_the_servo_alone(tmp_path, monkeypatch, capsys):

@@ -191,11 +191,7 @@ with its default. The main ones:
   (3 by default) and turns back to `rest_angle`, for a paddle that tips or
   pushes each resistor off to one side or the other. Power the servo from its
   own 5 V supply with grounds joined; a servo on the Pi's 5 V pin can brown it
-  out. The servo is detached once it is back at rest (or, in chute mode, at
-  the bin) so it does not buzz.
-  The servo is driven from its own process at real-time priority, so its
-  software PWM pulses stay on time while OpenCV keeps the other cores busy; that
-  needs root (`sudo`, as the light does), and without it the servo can jitter.
+  out.
 - **`[matrix]`**: an 8x8 LED matrix on a MAX7219 shows a ring while the sorter
   waits, fills up from the bottom while a resistor is watched, and then shows
   its bin number (the bin's position in this file, 1 for the first `[[bin]]`;
