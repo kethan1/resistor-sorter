@@ -146,6 +146,21 @@ def test_settling_starts_at_the_first_frame(monkeypatch):
     assert source._capture.reads > 8  # the 0.05 s wait for the first frame did not use up the settling
 
 
+def test_focus_and_zoom_wait_for_the_stream(monkeypatch):
+    class Recording(SlowStartCapture):
+        def set(self, prop, value):
+            self.reads_when_set[prop] = self.reads
+            return super().set(prop, value)
+
+    monkeypatch.setattr(cv2, "VideoCapture", Recording)
+    Recording.reads_when_set = {}
+    capture = open_source(CameraConfig(source="/dev/video4", lock_after=0.0, focus=40, zoom=25))._capture
+    # A zoom sent before the first real frame is lost when the OBSBOT starts up slowly.
+    assert capture.props[cv2.CAP_PROP_FOCUS] == 40 and capture.props[cv2.CAP_PROP_ZOOM] == 25
+    assert capture.reads_when_set[cv2.CAP_PROP_FOCUS] >= 7  # after the 6 blank frames and the first picture
+    assert capture.reads_when_set[cv2.CAP_PROP_ZOOM] >= 7
+
+
 def test_a_camera_that_only_sends_black_still_returns_frames(monkeypatch):
     monkeypatch.setattr(cv2, "VideoCapture", lambda source, backend: SlowStartCapture(source, backend, (0,) * 1000))
     source = open_source(CameraConfig(source="/dev/video4", lock_after=0.0))

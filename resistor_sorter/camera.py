@@ -70,10 +70,6 @@ class CvCamera:
         self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.width)
         self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.height)
         self._capture.set(cv2.CAP_PROP_FPS, cfg.fps)
-        self.set_focus(None if cfg.focus < 0 else cfg.focus)
-        if cfg.zoom >= 0:
-            self._zoom_before = self._capture.get(cv2.CAP_PROP_ZOOM)
-            self.set_zoom(cfg.zoom)
         # Exposure and white balance stay automatic. Like many UVC cameras, the
         # OBSBOT Meet 2 reports the stored manual values rather than what auto
         # mode is using, so freezing them turns the picture almost black or
@@ -84,6 +80,13 @@ class CvCamera:
         # frames, so time the settling from the first real frame rather than
         # from opening the camera.
         self.read()
+        # Focus and zoom go in only once the stream is running. After a few
+        # idle seconds the OBSBOT takes ~5 s to start streaming and drops a
+        # zoom set before that partway through, while still reporting it as set.
+        self.set_focus(None if cfg.focus < 0 else cfg.focus)
+        if cfg.zoom >= 0:
+            self._zoom_before = self._capture.get(cv2.CAP_PROP_ZOOM)
+            self.set_zoom(cfg.zoom)
         # Let exposure and white balance (and the lens, after a focus/zoom
         # change) settle before frames are used.
         end = time.monotonic() + cfg.lock_after
