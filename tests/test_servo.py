@@ -65,14 +65,14 @@ def test_chute_mode_turns_to_the_bin_and_stays(gpiozero):
     assert servo.log == [-60.0, "detach", 90.0, "detach", "close"]
 
 
-def test_swing_mode_turns_waits_and_turns_back(gpiozero, monkeypatch):
+def test_swing_mode_turns_holds_and_turns_back(gpiozero, monkeypatch):
     sleeps = []
     monkeypatch.setattr(time, "sleep", sleeps.append)
     chute = Chute(ServoConfig(mode="swing", rest_angle=5, hold=1.5, settle=0.2))
     servo = FakeServo.instances[-1]
     assert servo.log == [5, "detach"]  # starts at rest
     chute.point(60)
-    assert servo.log == [5, "detach", 60, "detach", 5, "detach"]
+    assert servo.log == [5, "detach", 60, 5, "detach"]  # still driven while it holds the bin angle
     assert sleeps == [0.2, 0.2, 1.5, 0.2]
 
 

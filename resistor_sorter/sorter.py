@@ -39,7 +39,9 @@ class Sorter:
     No single frame is trusted on its own. A resistor is watched for `window`
     seconds and goes to the bin that at least `min_agreement` of the trusted
     readings from that time agree on, as long as there are `min_readings` of
-    them. Readings older than the window are forgotten, so a bad start while
+    them and the latest `stable_readings` all agree with it too, so the
+    current reading matches the rolling consensus rather than drifting away
+    from it. Readings older than the window are forgotten, so a bad start while
     the resistor is being put down does not count against it. If the readings
     never agree it is rejected after `reject_after` seconds. Nothing more
     happens until it has been out of view for `clear_after` seconds.
@@ -123,6 +125,9 @@ class Sorter:
         index, agreed = counts.most_common(1)[0]
         if agreed < self.cfg.min_agreement * len(readings):
             return None
+        latest = readings[-self.cfg.stable_readings:]
+        if len(latest) < self.cfg.stable_readings or any(self._bin_index(r) != index for r in latest):
+            return None
         tally = self._tally(readings)
         # Report the value read most often among those that chose the winning bin.
         reading = next(r for r, _ in tally if self._bin_index(r) == index)
@@ -202,17 +207,21 @@ class Chute:
             self._move(cfg.rest_angle)
 
     def point(self, angle: float) -> None:
-        """Turn to `angle`; in "swing" mode, wait there and then turn back to the rest angle."""
-        self._move(angle)
+        """Turn to `angle`; in "swing" mode, hold there and then turn back to the rest angle."""
         if self.cfg.mode == "swing":
+            # Keep driving the servo through the hold, so the paddle is not pushed back while it waits.
+            self._move(angle, detach=False)
             time.sleep(self.cfg.hold)
             self._move(self.cfg.rest_angle)
+        else:
+            self._move(angle)
 
-    def _move(self, angle: float) -> None:
+    def _move(self, angle: float, detach: bool = True) -> None:
         self._servo.angle = max(-90.0, min(90.0, angle))
         time.sleep(self.cfg.settle)
-        # Stop sending pulses so software PWM jitter does not make the servo buzz.
-        self._servo.detach()
+        if detach:
+            # Stop sending pulses so software PWM jitter does not make the servo buzz.
+            self._servo.detach()
 
     def close(self) -> None:
         self._servo.close()

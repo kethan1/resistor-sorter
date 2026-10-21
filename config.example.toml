@@ -33,6 +33,8 @@ end_trim = 0.04         # ignored at each end of the body
 window = 2.0          # seconds a resistor is watched; the readings over that time decide its bin
 min_readings = 3      # trusted readings a decision needs (a Pi 4 gives 5-10 a second, a Pi 3 2-4)
 min_agreement = 0.75  # share of those readings that must agree on the bin; raise for fewer wrong bins
+stable_readings = 3   # the latest trusted readings must all agree with that bin too, so the reading
+                      # has settled; raise for fewer wrong bins while the resistor is still moving
 reject_after = 6.0    # seconds without a decision before the resistor is rejected
 clear_after = 0.5     # seconds with nothing in view before the next resistor is expected
 min_margin = 4.0      # how clear-cut a single reading must be to count; raise for fewer wrong bins
@@ -48,9 +50,9 @@ max_pulse_ms = 2.4
 reject_angle = 90.0   # where unreadable resistors go
 settle = 0.5          # seconds to wait for the servo to arrive
 mode = "chute"        # "chute": turn to the bin's angle and stay there until the next resistor
-                      # "swing": turn there, wait `hold` seconds, turn back to `rest_angle`
+                      # "swing": turn there, hold `hold` seconds, turn back to `rest_angle`
 rest_angle = 0.0      # ("swing" only) where the servo waits between resistors
-hold = 1.0            # ("swing" only) seconds at the bin angle before turning back
+hold = 3.0            # ("swing" only) seconds at the bin angle before turning back
 
 [matrix]
 enabled = "auto"      # an 8x8 LED matrix on a MAX7219 that shows each resistor's bin number; "auto"

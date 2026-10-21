@@ -161,8 +161,9 @@ means that colour needs calibrating.
 **4. Sort.** `run` watches continuously. No single frame is trusted: a
 resistor is watched for 2 seconds and the trustworthy readings from that time
 are averaged out by voting. When at least three quarters of them (and at least
-3) agree on a bin, the servo turns to that bin's angle, and the resistor is
-then ignored until it is taken away. Readings older than 2 seconds are dropped
+3) agree on a bin, and the latest 3 all agree with it as well (so the reading
+has settled rather than still changing), the servo turns to that bin's angle,
+and the resistor is then ignored until it is taken away. Readings older than 2 seconds are dropped
 as it goes, so a bad start while the resistor is being put down does not count
 against it. If the readings never agree, it goes to the reject position after
 6 seconds and the printed line says which values were read how often. The
@@ -186,11 +187,12 @@ with its default. The main ones:
   SG90's full travel; narrow them towards 1 and 2 ms for a servo that strains
   at ±90°.
   `mode = "chute"` turns to the bin's angle and stays there until the next
-  resistor. `mode = "swing"` turns there, waits `hold` seconds and turns back
-  to `rest_angle`, for a paddle that tips or pushes each resistor off to one
-  side or the other. Power the servo from its own 5 V supply with grounds
-  joined; a servo on the Pi's 5 V pin can brown it out. The servo is detached
-  after each move so it does not buzz.
+  resistor. `mode = "swing"` turns there, holds that angle for `hold` seconds
+  (3 by default) and turns back to `rest_angle`, for a paddle that tips or
+  pushes each resistor off to one side or the other. Power the servo from its
+  own 5 V supply with grounds joined; a servo on the Pi's 5 V pin can brown it
+  out. The servo is detached once it is back at rest (or, in chute mode, at
+  the bin) so it does not buzz.
 - **`[matrix]`**: an 8x8 LED matrix on a MAX7219 shows a ring while the sorter
   waits, fills up from the bottom while a resistor is watched, and then shows
   its bin number (the bin's position in this file, 1 for the first `[[bin]]`;
@@ -217,12 +219,13 @@ with its default. The main ones:
   under "Install on the Pi".
 - **`[sorter]`**: `window` is how many seconds of readings each decision is
   based on, `min_readings` how many of them it needs, and `min_agreement` the
-  share that must point at the same bin. `reject_after` and `clear_after` are
+  share that must point at the same bin. `stable_readings` is how many of the
+  latest readings must all point at that bin as well. `reject_after` and `clear_after` are
   the seconds before giving up on a resistor and before the next one is
   expected. `min_margin` and `max_color_distance` decide when a single reading
-  counts as trustworthy. Raising `min_agreement`, `min_readings` or
-  `min_margin`, or lowering `max_color_distance`, gives fewer wrong bins and
-  more rejects.
+  counts as trustworthy. Raising `min_agreement`, `min_readings`,
+  `stable_readings` or `min_margin`, or lowering `max_color_distance`, gives
+  fewer wrong bins and more rejects.
 - **`[web]`**: the preview has no password. Set `host = "127.0.0.1"` or
   `enabled = false` on a shared network.
 - **`[camera]`**: `source` is the OBSBOT's `/dev/v4l/by-id/` path by
@@ -242,7 +245,7 @@ the other, use two bins and `swing` mode:
 
 ```toml
 [servo]
-mode = "swing"     # turn, wait a second, turn back to the middle
+mode = "swing"     # turn, hold for 3 seconds, turn back to the middle
 
 [[bin]]
 name = "under 1 kΩ"

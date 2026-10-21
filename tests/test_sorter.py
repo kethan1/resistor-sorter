@@ -60,12 +60,20 @@ def test_decides_from_a_window_of_readings_then_waits_for_removal():
 
 def test_a_few_stray_readings_are_outvoted():
     sorter, clock = make_sorter()
-    events = feed(sorter, clock, [READING] * 4 + [OTHER, None, OTHER] + [READING] * 2)
-    assert events[:8] == [None] * 8
-    event = events[8]
+    events = feed(sorter, clock, [READING] * 4 + [OTHER, None, OTHER] + [READING] * 3)
+    assert events[:9] == [None] * 9  # the latest three readings did not all agree yet
+    event = events[9]
     assert event.reading.ohms == 4700 and event.bin.name == "1 kΩ – 10 kΩ"
     assert (event.agreed, event.votes) == (6, 8)  # exactly min_agreement
     assert event.tally == [(READING, 6), (OTHER, 2)]
+
+
+def test_waits_until_the_latest_readings_agree_with_the_rest():
+    sorter, clock = make_sorter()
+    events = feed(sorter, clock, [READING] * 7 + [OTHER] * 2 + [READING] * 3)
+    assert events[:11] == [None] * 11  # 7 of 9 agree, but the latest readings had wandered off
+    event = events[11]
+    assert event.reading.ohms == 4700 and (event.agreed, event.votes) == (7, 9)
 
 
 def test_values_in_the_same_bin_count_together():
@@ -158,6 +166,7 @@ def test_config_file(tmp_path):
     for text, complaint in [
         ("[sorter]\nwindoe = 9\n", "windoe"),
         ("[sorter]\nmin_agreement = 75\n", "min_agreement"),
+        ("[sorter]\nstable_readings = 0\n", "stable_readings"),
         ("[sorter]\nwindow = 9\n", "reject_after"),
         ('[servo]\nenabled = "sometimes"\n', "enabled"),
         ('[servo]\nmode = "flap"\n', "mode"),

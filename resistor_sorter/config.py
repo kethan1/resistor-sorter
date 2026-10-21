@@ -45,6 +45,7 @@ class SorterConfig:
     window: float = 2.0  # seconds a resistor is watched; the readings over that time decide its bin
     min_readings: int = 3  # trusted readings a decision needs
     min_agreement: float = 0.75  # share of the window's trusted readings that must agree on the bin
+    stable_readings: int = 3  # the latest trusted readings that must all agree with that bin too
     reject_after: float = 6.0  # seconds without a decision before the resistor is rejected
     clear_after: float = 0.5  # seconds with nothing in view before the next resistor is expected
     min_margin: float = 4.0  # readings less clear-cut than this are not trusted
@@ -61,7 +62,7 @@ class ServoConfig:
     settle: float = 0.5  # seconds to wait for the servo to arrive
     mode: str = "chute"  # "chute": stay aimed at the bin; "swing": go there, wait `hold`, return to `rest_angle`
     rest_angle: float = 0.0  # ("swing" only) where the servo waits between resistors
-    hold: float = 1.0  # ("swing" only) seconds at the bin angle before swinging back
+    hold: float = 3.0  # ("swing" only) seconds at the bin angle before swinging back
 
 
 @dataclass
@@ -168,6 +169,8 @@ def _check(config: Config) -> None:
         raise ValueError("light.color is [red, green, blue], 0 to 255 each")
     if not 0 < sorter.min_agreement <= 1:
         raise ValueError("sorter.min_agreement is a share between 0 and 1, e.g. 0.75")
+    if sorter.stable_readings < 1:
+        raise ValueError("sorter.stable_readings is how many of the latest readings must agree, at least 1")
     if sorter.reject_after < sorter.window:
         raise ValueError("sorter.reject_after must not be shorter than sorter.window")
 
