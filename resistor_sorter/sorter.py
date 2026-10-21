@@ -186,17 +186,14 @@ class Chute:
 
     def __init__(self, cfg: ServoConfig):
         try:
-            from gpiozero import AngularServo, GPIOZeroError
+            from gpiozero import Servo, GPIOZeroError
         except ImportError as error:
             raise ImportError("the servo needs gpiozero: sudo apt install python3-gpiozero") from error
 
         self.cfg = cfg
         try:
-            self._servo = AngularServo(
+            self._servo = Servo(
                 cfg.pin,
-                initial_angle=None,
-                min_angle=-90,
-                max_angle=90,
                 min_pulse_width=cfg.min_pulse_ms / 1000,
                 max_pulse_width=cfg.max_pulse_ms / 1000,
             )
@@ -217,7 +214,7 @@ class Chute:
             self._move(angle)
 
     def _move(self, angle: float, detach: bool = True) -> None:
-        self._servo.angle = max(-90.0, min(90.0, angle))
+        self._servo.value = max(-1, min(1, angle))
         time.sleep(self.cfg.settle)
         if detach:
             # Stop sending pulses so software PWM jitter does not make the servo buzz.
