@@ -8,8 +8,8 @@ and shows the bin's number on an 8x8 LED matrix.
 ```
 $ sudo python3 -m resistor_sorter run
 preview on http://0.0.0.0:8000/
-light: on GPIO 12, 21 (8 LEDs each)
-servo: on GPIO 17, chute mode
+light: on GPIO 21 (8 LEDs)
+servo: on GPIO 18, chute mode
 matrix: on /dev/spidev0.0
 ready - place a resistor under the camera (Ctrl-C to quit)
 4.7 kΩ ±5%  [yellow violet red gold]  -> 1 kΩ – 10 kΩ  (14 of 15 readings)
@@ -78,7 +78,7 @@ change them on an open camera.
 
 ```sh
 sudo apt update
-sudo apt install -y python3-opencv python3-numpy python3-gpiozero python3-spidev v4l-utils
+sudo apt install -y python3-opencv python3-numpy python3-spidev v4l-utils
 v4l2-ctl --list-devices      # should list "OBSBOT Meet 2"
 ```
 
@@ -101,11 +101,21 @@ sudo pip3 install --break-system-packages rpi_ws281x adafruit-circuitpython-neop
 It drives the strips from the Pi's PWM and PCM hardware, which only root may
 use, so with the light enabled put `sudo` in front of every command below (set
 `enabled = false` under `[light]` to do without it). Wire each strip's 5 V and
-GND to a 5 V pin (2 or 4) and a ground, and DIN to GPIO 12 (pin 32) and GPIO 21
-(pin 40). Sixteen LEDs at full white draw up to about 1 A, which the Pi's 5 V
+GND to a 5 V pin (2 or 4) and a ground, and both DINs to GPIO 21 (pin 40); they
+show the same colour, so one data line drives both. Sixteen LEDs at full white draw up to about 1 A, which the Pi's 5 V
 pins can supply from a 3 A power supply; more strips want a supply of their own
-with grounds joined. If the strip on GPIO 12 flickers, the onboard audio is
-sharing its PWM: set `dtparam=audio=off` in `/boot/firmware/config.txt`.
+with grounds joined.
+
+The servo runs on the Pi's hardware PWM, which keeps its pulses steady however
+busy the CPU is. Turn it on by adding these lines to `/boot/firmware/config.txt`
+and rebooting; `ls /sys/class/pwm` should then list `pwmchip0`:
+
+```
+dtoverlay=pwm,pin=18,func=2
+dtparam=audio=off
+```
+
+The second line keeps the onboard audio, which uses the same PWM, away from it.
 
 Copy this folder to the Pi and run everything from inside it with
 `python3 -m resistor_sorter ...` (`sudo python3 -m resistor_sorter ...` with the
@@ -179,11 +189,11 @@ with its default. The main ones:
 
 - **`[[bin]]`**: sort by range (`min`/`max` in ohms) or exact `values`; first
   match wins. Each bin has a servo `angle`.
-- **`[servo]`**: `enabled = "auto"` (the default) drives a servo on GPIO 17
-  (physical pin 11) when running on a Raspberry Pi with `python3-gpiozero`
-  installed, and leaves it alone anywhere else; `true` and `false` force it.
-  `pin` moves it, but keep it off GPIO 12 and 18, the hardware PWM pins the
-  light's driver takes over. The default pulse widths of 0.5 and 2.4 ms are an
+- **`[servo]`**: `enabled = "auto"` (the default) drives a servo on GPIO 18
+  (physical pin 12) when running on a Raspberry Pi with hardware PWM turned on
+  (see "Install on the Pi"), and leaves it alone anywhere else; `true` and
+  `false` force it. `pin` must be a hardware PWM pin, 12, 13, 18 or 19, and
+  match the `pin=` of the `dtoverlay=pwm` line. The default pulse widths of 0.5 and 2.4 ms are an
   SG90's full travel; narrow them towards 1 and 2 ms for a servo that strains
   at ±90°.
   `mode = "chute"` turns to the bin's angle and stays there until the next
@@ -210,8 +220,8 @@ with its default. The main ones:
 - **`[light]`**: WS2812 (NeoPixel) strips that light the resistor. They come on
   white whenever the camera is in use (`run`, `read`, `snap` and `calibrate`)
   and go off at exit, so calibration and sorting see the same light. `enabled`
-  works as for the servo. `pins` lists the GPIO of each strip's data line (the
-  Pi can drive strips from GPIO 12 or 18, 21 and 10), `leds` is how many LEDs
+  works as for the servo. `pins` lists the GPIO of each data line (21; GPIO 12
+  and 18 would take the servo's PWM and 10 the matrix's SPI), `leds` is how many LEDs
   each strip has, `brightness` goes from 0 to 1 and `color` is the red, green
   and blue to show. The colour is resent once a second, so a strip that lost
   it to a dip in its supply recovers. Installing the library and wiring are
@@ -331,12 +341,11 @@ light needs; with the light disabled, add `User=pi` under `[Service]`.
   same colour (red red ...) can be read as one. Hold the camera still and fix
   the focus.
 - The Pi camera code (`camera.PiCamera`), servo code (`sorter.Chute`) and LED
-  matrix code (`matrix.Max7219`) follow the picamera2 and gpiozero
+  matrix code (`matrix.Max7219`) follow the picamera2 and Linux PWM
   documentation and the MAX7219 datasheet but were written without the
   hardware at hand. The light code (`light.Light`) makes the same calls as a
-  short script run on the rig's two strips, and a servo on GPIO 17 with the
-  default pulse widths has been moved from a gpiozero script, but neither has
-  been driven from the sorter itself yet. The USB camera code (4K capture,
+  short script run on the rig's two strips, but has not been driven from the
+  sorter itself yet. The USB camera code (4K capture,
   focus, zoom and the exposure/white balance lock) was checked on an OBSBOT
   Meet 2. The vision and sorting logic is covered by tests.
 

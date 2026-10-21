@@ -176,27 +176,41 @@ def unavailable(enabled: bool | str, module: str, package: str) -> str | None:
     return None
 
 
+PWM_CHIP = Path("/sys/class/pwm/pwmchip0")  # the Pi's hardware PWM, once the pwm overlay is loaded
+PWM_CHANNELS = {12: 0, 18: 0, 13: 1, 19: 1}  # the GPIO each of its two channels can drive
+PWM_OVERLAY = "add dtoverlay=pwm,pin=18,func=2 to /boot/firmware/config.txt and reboot"
+SERVO_PERIOD_NS = 20_000_000  # 50 Hz
+
+
 def servo_unavailable(cfg: ServoConfig) -> str | None:
     """Why the servo is going to be left alone, or None when it will be driven."""
-    return unavailable(cfg.enabled, "gpiozero", "python3-gpiozero")
+    if not cfg.enabled:
+        return "disabled in the config"
+    if cfg.enabled == "auto":
+        if not is_raspberry_pi():
+            return "not running on a Raspberry Pi"
+        if not PWM_CHIP.exists():
+            return f"hardware PWM is off ({PWM_OVERLAY})"
+    return None
 
 
 class Chute:
-    """A hobby servo that aims a chute at the chosen bin, or swings towards it and back."""
+    """A hobby servo that aims a chute at the chosen bin, or swings towards it and back.
+
+    It runs on the Pi's hardware PWM, which times the pulses itself, so the servo holds steady however
+    busy OpenCV keeps the CPU (gpiozero's software PWM made it jitter)."""
 
     def __init__(self, cfg: ServoConfig):
-        try:
-            from gpiozero import GPIOZeroError, Servo
-        except ImportError as error:
-            raise ImportError("the servo needs gpiozero: sudo apt install python3-gpiozero") from error
-
         self.cfg = cfg
+        channel = PWM_CHANNELS[cfg.pin]
+        self._pwm = PWM_CHIP / f"pwm{channel}"
         try:
-            self._servo = Servo(cfg.pin, min_pulse_width=cfg.min_pulse_ms / 1000,
-                                max_pulse_width=cfg.max_pulse_ms / 1000)
-        except GPIOZeroError as error:
+            if not self._pwm.exists():
+                (PWM_CHIP / "export").write_text(str(channel))
+            self._write("period", SERVO_PERIOD_NS)
+        except OSError as error:
             raise RuntimeError(f"cannot drive a servo on GPIO {cfg.pin}: {error} "
-                               '(servo.enabled = "auto" skips the servo away from a Pi)') from error
+                               f"(it needs hardware PWM: {PWM_OVERLAY}; and sudo)") from error
         if cfg.mode == "swing":
             self._move(cfg.rest_angle)
 
@@ -208,8 +222,17 @@ class Chute:
             self._move(self.cfg.rest_angle)
 
     def _move(self, value: float) -> None:
-        self._servo.value = max(-1, min(1, value))
+        """Turn to `value`, -1 (min_pulse_ms) to 1 (max_pulse_ms), as gpiozero's Servo.value."""
+        value = max(-1, min(1, value))
+        pulse_ms = self.cfg.min_pulse_ms + (value + 1) / 2 * (self.cfg.max_pulse_ms - self.cfg.min_pulse_ms)
+        self._write("duty_cycle", round(pulse_ms * 1_000_000))
+        self._write("enable", 1)
         time.sleep(self.cfg.settle)
 
+    def _write(self, name: str, value: int) -> None:
+        (self._pwm / name).write_text(str(value))
+
     def close(self) -> None:
-        self._servo.close()
+        """Stop the pulses and hand the PWM channel back."""
+        self._write("enable", 0)
+        (PWM_CHIP / "unexport").write_text(str(PWM_CHANNELS[self.cfg.pin]))

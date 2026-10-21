@@ -54,8 +54,8 @@ class SorterConfig:
 
 @dataclass
 class ServoConfig:
-    enabled: bool | str = "auto"  # true, false, or "auto": only on a Raspberry Pi with gpiozero installed
-    pin: int = 17  # BCM numbering; not 12 or 18, the hardware PWM pins the light's driver takes over
+    enabled: bool | str = "auto"  # true, false, or "auto": only on a Raspberry Pi with hardware PWM turned on
+    pin: int = 18  # BCM numbering; a hardware PWM pin (12 or 18, 13 or 19) set up by the pwm overlay
     min_pulse_ms: float = 0.5  # an SG90's full travel; 1.0 / 2.0 for a servo that strains at +-90
     max_pulse_ms: float = 2.4
     settle: float = 0.5  # seconds to wait for the servo to arrive
@@ -82,7 +82,7 @@ class LightConfig:
     """WS2812 (NeoPixel) strips that light the resistor whenever the camera is in use."""
 
     enabled: bool | str = "auto"  # true, false, or "auto": only on a Raspberry Pi with the neopixel library installed
-    pins: list[int] = field(default_factory=lambda: [12, 21])  # BCM, one strip per pin: 12/18 (PWM), 21 (PCM) or 10 (SPI)
+    pins: list[int] = field(default_factory=lambda: [21])  # BCM, one per data line: 21 (PCM); 12/18 (PWM) and 10 (SPI) clash with the servo and matrix
     leds: int = 8  # LEDs on each strip
     brightness: float = 1.0  # 0 to 1
     color: list[int] = field(default_factory=lambda: [255, 255, 255])  # red, green, blue, 0-255 each
@@ -144,6 +144,8 @@ def _check(config: Config) -> None:
     for name, section in (("servo", servo), ("matrix", matrix), ("light", light)):
         if not isinstance(section.enabled, bool) and section.enabled != "auto":
             raise ValueError(f'{name}.enabled must be true, false or "auto"')
+    if servo.pin not in (12, 13, 18, 19):
+        raise ValueError("servo.pin must be a hardware PWM pin: 12 or 18 (channel 0), 13 or 19 (channel 1)")
     if servo.mode not in SERVO_MODES:
         raise ValueError(f"servo.mode must be one of {', '.join(SERVO_MODES)}")
     if not 0 <= matrix.brightness <= 15:
@@ -154,7 +156,7 @@ def _check(config: Config) -> None:
         raise ValueError("matrix.chain is the number of MAX7219s on the module, at least 1")
     if (not isinstance(light.pins, list) or not light.pins
             or any(not isinstance(pin, int) or not 0 <= pin <= 27 for pin in light.pins)):
-        raise ValueError("light.pins lists the BCM GPIO (0-27) of each strip's data line, e.g. [12, 21]; "
+        raise ValueError("light.pins lists the BCM GPIO (0-27) of each strip's data line, e.g. [21]; "
                          "light.enabled = false does without a light")
     if light.leds < 1:
         raise ValueError("light.leds is the number of LEDs on each strip, at least 1")

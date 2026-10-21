@@ -98,7 +98,8 @@ def test_the_colour_is_resent_once_a_second(neopixel):
 
 
 def test_location():
-    assert location(LightConfig()) == "GPIO 12, 21 (8 LEDs each)"
+    assert location(LightConfig()) == "GPIO 21 (8 LEDs)"
+    assert location(LightConfig(pins=[12, 21])) == "GPIO 12, 21 (8 LEDs each)"
     assert location(LightConfig(pins=[18], leds=30)) == "GPIO 18 (30 LEDs)"
 
 
@@ -116,7 +117,7 @@ def test_neopixel_problems_are_explained(neopixel):
 
     neopixel.NeoPixel = RootlessNeoPixel
     with pytest.raises(RuntimeError, match="GPIO 12, 21.*sudo"):
-        Light(LightConfig())
+        Light(LightConfig(pins=[12, 21]))
     assert [s.log for s in FakeNeoPixel.instances] == [["deinit"]] * 2  # the pins are let go of
 
 
@@ -168,7 +169,7 @@ def test_run_lights_the_scene_before_the_camera_opens_and_darkens_it_after(tmp_p
     opened = lit_when_opening(monkeypatch)
     monkeypatch.chdir(tmp_path)
     cv2.imwrite("r.png", render(["yellow", "violet", "red", "gold"]))
-    (tmp_path / "config.toml").write_text("[web]\nenabled = false\n[servo]\nenabled = false\n[light]\nenabled = true\n")
+    (tmp_path / "config.toml").write_text("[web]\nenabled = false\n[servo]\nenabled = false\n[light]\nenabled = true\npins = [12, 21]\n")
     assert main(["--source", "r.png", "run"]) == 0
     assert "light: on GPIO 12, 21 (8 LEDs each)" in capsys.readouterr().out
     assert opened == [[[WHITE], [WHITE]]]  # both strips were lit before the camera opened
