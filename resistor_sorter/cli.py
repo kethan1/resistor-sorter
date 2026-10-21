@@ -114,7 +114,7 @@ def cmd_run(cfg: Config, args) -> int:
             if event is not None:
                 print(_outcome(event, detection), flush=True)
                 if chute:
-                    chute.point(event.bin.angle if event.bin else cfg.servo.reject_angle)
+                    chute.point(event.bin.angle if event.bin else 0)
     except KeyboardInterrupt:
         print()
     finally:

@@ -47,7 +47,6 @@ pin = 17              # BCM numbering (physical pin 11); keep off GPIO 12 and 18
                       # PWM pins the light's driver takes over
 min_pulse_ms = 0.5    # an SG90's full travel; narrow towards 1.0 / 2.0 if the servo strains at +-90
 max_pulse_ms = 2.4
-reject_angle = 90.0   # where unreadable resistors go
 settle = 0.5          # seconds to wait for the servo to arrive
 mode = "chute"        # "chute": turn to the bin's angle and stay there until the next resistor
                       # "swing": turn there, hold `hold` seconds, turn back to `rest_angle`

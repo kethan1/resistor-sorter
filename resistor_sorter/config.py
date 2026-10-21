@@ -58,7 +58,6 @@ class ServoConfig:
     pin: int = 17  # BCM numbering; not 12 or 18, the hardware PWM pins the light's driver takes over
     min_pulse_ms: float = 0.5  # an SG90's full travel; 1.0 / 2.0 for a servo that strains at +-90
     max_pulse_ms: float = 2.4
-    reject_angle: float = 90.0  # where unreadable resistors go
     settle: float = 0.5  # seconds to wait for the servo to arrive
     mode: str = "chute"  # "chute": stay aimed at the bin; "swing": go there, wait `hold`, return to `rest_angle`
     rest_angle: float = 0.0  # ("swing" only) where the servo waits between resistors
@@ -113,11 +112,8 @@ class Bin:
 
 def _default_bins() -> list[Bin]:
     return [
-        Bin("under 100 Ω", max=100, angle=-60),
-        Bin("100 Ω – 1 kΩ", min=100, max=1e3, angle=-30),
-        Bin("1 kΩ – 10 kΩ", min=1e3, max=1e4, angle=0),
-        Bin("10 kΩ – 100 kΩ", min=1e4, max=1e5, angle=30),
-        Bin("100 kΩ and up", min=1e5, angle=60),
+        Bin("under 1 kΩ", max=100, angle=-0.75),
+        Bin("1 kΩ and up", min=1e3, max=1e4, angle=0.75),
     ]
 
 
